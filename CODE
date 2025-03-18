@@ -1,0 +1,217 @@
+!pip install surprise
+
+
+# Import required libraries
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics.pairwise import cosine_similarity
+from surprise import Dataset, Reader, SVD, KNNBasic, accuracy
+from surprise.model_selection import train_test_split
+
+
+from google.colab import drive
+drive.mount('/content/drive')
+
+
+#Books data
+file_path = ('/content/drive/MyDrive/Copy of Books.csv')
+books = pd.read_csv('/content/Books.csv')
+file_path = ('/content/drive/MyDrive/Copy of Users.csv')
+users = pd.read_csv('/content/Users.csv')
+file_path = ('/content/drive/MyDrive/Copy of Ratings.csv')
+ratings = pd.read_csv('/content/Ratings.csv')
+# Preview datasets
+print("Users Data:")
+print(users.head())
+print("\nBooks Data:")
+print(books.head())
+print("\nRatings Data:")
+print(ratings.head())
+
+
+
+# Check for missing values
+print("\nMissing Values:")
+print("Users: ", users.isnull().sum())
+print("Books: ", books.isnull().sum())
+print("Ratings: ", ratings.isnull().sum())
+
+# Data Cleaning
+users['Age'].fillna(users['Age'].mean(), inplace=True)
+ratings = ratings[ratings['Book-Rating'] > 0]  # Removing implicit ratings (Book-Rating = 0)
+
+# Merge datasets for analysis
+ratings_with_books = pd.merge(ratings, books, on='ISBN')
+complete_data = pd.merge(ratings_with_books, users, on='User-ID')
+
+
+# Unique counts
+print("\nUnique Users: ", complete_data['User-ID'].nunique())
+print("Unique Books: ", complete_data['Book-Title'].nunique())
+
+# Rating distribution visualization
+print("Rating Distribution:")
+sns.histplot(complete_data['Book-Rating'], bins=10, kde=False)
+plt.title("Rating Distribution")
+plt.show()
+
+
+# Popularity-Based Recommendation
+popularity_data = complete_data.groupby('Book-Title').agg({'Book-Rating': 'count'}).reset_index()
+popularity_data = popularity_data.sort_values('Book-Rating', ascending=False).head(10)
+print("\nMost Popular Books:")
+print(popularity_data)
+
+# Plot popular books
+plt.figure(figsize=(12, 6))
+sns.barplot(data=popularity_data, x='Book-Rating', y='Book-Title', palette='viridis')
+plt.title("Top 10 Popular Books")
+plt.xlabel("Number of Ratings")
+plt.ylabel("Book Title")
+plt.show()
+
+
+# Filter the dataset to reduce size
+# Keep users with at least 50 ratings and books with at least 50 ratings
+filtered_data = complete_data.groupby('User-ID').filter(lambda x: len(x) >= 50)
+filtered_data = filtered_data.groupby('Book-Title').filter(lambda x: len(x) >= 50)
+
+# Create a pivot table (user-book matrix)
+user_book_matrix = filtered_data.pivot_table(index='User-ID', columns='Book-Title', values='Book-Rating').fillna(0)
+
+# Convert the pivot table to a sparse matrix to save memory
+from scipy.sparse import csr_matrix
+sparse_matrix = csr_matrix(user_book_matrix)
+
+# Compute cosine similarity on sparse matrix
+from sklearn.metrics.pairwise import cosine_similarity
+similarity_matrix = cosine_similarity(sparse_matrix)
+
+# Convert the similarity matrix to a DataFrame
+similarity_df = pd.DataFrame(similarity_matrix, index=user_book_matrix.index, columns=user_book_matrix.index)
+
+# Function to get book recommendations based on similar users
+def get_user_recommendations(user_id, num_recommendations=5):
+    if user_id not in similarity_df.index:
+        print(f"User {user_id} not found in the filtered dataset.")
+        return []
+
+    similar_users = similarity_df[user_id].sort_values(ascending=False).index[1:num_recommendations + 1]
+    recommended_books = []
+    for sim_user in similar_users:
+        books_rated = filtered_data[filtered_data['User-ID'] == sim_user]['Book-Title'].unique()
+        recommended_books.extend(books_rated)
+    return set(recommended_books)
+
+# Example recommendations for a user
+print("\nRecommendations for User 275970:")
+print(get_user_recommendations(275970))
+
+
+# Filter users who have rated at least 50 books
+users_with_50_ratings = complete_data.groupby('User-ID').filter(lambda x: len(x) >= 50)
+
+# Get the unique User-IDs from the filtered dataset
+user_ids_in_range = users_with_50_ratings['User-ID'].unique()
+
+# Display the User-IDs
+print(f"Total Users with at least 50 ratings: {len(user_ids_in_range)}")
+print("User-IDs:")
+print(user_ids_in_range)
+
+
+import pandas as pd
+
+# Load the Ratings dataset
+ratings_df = pd.read_csv('Ratings.csv')
+
+# Count the number of ratings per user
+user_rating_counts = ratings_df['User-ID'].value_counts()
+
+# Filter users who have given at least 50 ratings
+users_with_50_ratings = user_rating_counts[user_rating_counts >= 50].index.tolist()
+
+# Total number of users who meet the condition
+total_users = len(users_with_50_ratings)
+
+# Display the results
+print(f"Total Users with at least 50 ratings: {total_users}")
+print("User-IDs:")
+print(users_with_50_ratings)  # This will show the complete list of User-IDs
+
+
+# Load data into Surprise
+reader = Reader(rating_scale=(1, 10))
+data = Dataset.load_from_df(ratings[['User-ID', 'ISBN', 'Book-Rating']], reader)
+
+# Train-test split
+trainset, testset = train_test_split(data, test_size=0.2)
+
+# Build and train SVD model
+svd = SVD()
+svd.fit(trainset)
+
+# Evaluate model
+predictions = svd.test(testset)
+print("\nRMSE of SVD Model:")
+print(accuracy.rmse(predictions))
+
+# Function to predict ratings for a user
+def predict_rating(user_id, isbn):
+    return svd.predict(user_id, isbn).est
+
+# Example prediction
+print("\nPredicted Rating for User 276725 and ISBN 034545104X:")
+print(predict_rating(276725, '034545104X'))
+
+
+# Prompt the user for a specific User-ID
+specific_user = int(input("Enter the User-ID to check: "))
+
+if specific_user in user_ids_in_range:
+    print(f"User {specific_user} is in the range with at least 50 ratings.")
+    print("Recommendations for this user:")
+    print(get_user_recommendations(specific_user))
+else:
+    print(f"User {specific_user} is NOT in the range.")
+
+
+# For example, let's predict ratings based on the popularity of the books (simple baseline model)
+# Popularity-based approach: Predict a "liked" recommendation if the book is rated more than average
+
+# Calculate the average rating for each book (you could use this as a basic predictor)
+# Use the 'ratings' DataFrame instead of 'ratings_df'
+book_avg_ratings = ratings.groupby('ISBN')['Book-Rating'].mean()
+
+# For simplicity, predict that a book is "liked" (1) if its average rating is >=6
+# Use the 'ratings' DataFrame instead of 'ratings_df'
+y_pred = ratings['ISBN'].apply(lambda x: 1 if book_avg_ratings[x] >= 6 else 0)
+
+from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Calculate metrics
+accuracy = accuracy_score(y_true, y_pred)
+precision = precision_score(y_true, y_pred)
+recall = recall_score(y_true, y_pred)
+f1 = f1_score(y_true, y_pred)
+
+# Generate confusion matrix
+cm = confusion_matrix(y_true, y_pred)
+
+# Plot confusion matrix
+plt.figure(figsize=(6, 4))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['Predicted 0', 'Predicted 1'], yticklabels=['Actual 0', 'Actual 1'])
+plt.xlabel('Predicted')
+plt.ylabel('Actual')
+plt.title('Confusion Matrix')
+plt.show()
+
+# Print the metrics
+print(f"Accuracy: {accuracy:.2f}")
+print(f"Precision: {precision:.2f}")
+print(f"Recall: {recall:.2f}")
+print(f"F1 Score: {f1:.2f}")
